@@ -4,6 +4,22 @@ All notable changes to `@sailingnaturali/signalk-ais-distress` are documented he
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2]
+
+### Fixed
+
+- A continuously-transmitting survival beacon no longer re-alarms every 5
+  minutes and no longer defeats an operator's clear. Repeats now slide the
+  dedupe window forward (via `signalk-distress-core` 0.3.0's `findRecent`
+  fix), so one incident stays one stored event, alarmed once, and a cleared
+  beacon stays silent for as long as it keeps transmitting.
+
+### Changed
+
+- Restart reannounce now uses `signalk-distress-core`'s shared
+  `notifier.reannounce` (with a `prepare` hook that refreshes the spoken
+  range/direction) instead of a duplicated inline loop.
+
 ## [0.1.1]
 
 ### Added

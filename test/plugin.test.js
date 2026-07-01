@@ -95,6 +95,75 @@ test('repeated bursts from the same beacon update, not re-alarm', async () => {
   plugin.stop();
 });
 
+// A survival beacon transmits for hours, far longer than the 5-min dedupe
+// window. Each burst must slide the window forward — otherwise a fresh event is
+// minted every window, re-alarming and losing an operator's clear.
+test('a beacon transmitting past the dedupe window updates one event, never re-alarms', async () => {
+  const app = mockApp();
+  const plugin = start(app);
+  const realNow = Date.now;
+  try {
+    const t0 = Date.parse('2026-06-30T20:00:00.000Z');
+    for (let m = 0; m <= 20; m += 2) { // a burst every 2 min for 20 min
+      Date.now = () => t0 + m * 60 * 1000;
+      pushPosition(app, EPIRB_CTX, { latitude: 48.79 + m * 1e-4, longitude: -123.26 });
+    }
+  } finally {
+    Date.now = realNow;
+  }
+  assert.equal(alarmsFor(app, 'epirb').length, 1); // one incident, alarmed once
+  const stored = Object.values(await app.resourceProviders['ais-distress'].methods.listResources());
+  assert.equal(stored.length, 1); // not one event per window
+  plugin.stop();
+});
+
+test('an operator clear survives a beacon that keeps transmitting past the window', async () => {
+  const app = mockApp();
+  const plugin = start(app);
+  const realNow = Date.now;
+  try {
+    const t0 = Date.parse('2026-06-30T20:00:00.000Z');
+    Date.now = () => t0;
+    pushPosition(app, EPIRB_CTX, POS);
+    app.putHandlers['vessels.self:notifications.ais.distress.epirb'](); // operator acks
+    for (let m = 2; m <= 20; m += 2) {
+      Date.now = () => t0 + m * 60 * 1000;
+      pushPosition(app, EPIRB_CTX, POS);
+    }
+  } finally {
+    Date.now = realNow;
+  }
+  const raises = app.deltas.filter(
+    (d) =>
+      d.delta.updates[0].values[0].path === 'notifications.ais.distress.epirb' &&
+      d.delta.updates[0].values[0].value &&
+      d.delta.updates[0].values[0].value.state === 'emergency'
+  );
+  assert.equal(raises.length, 1); // the initial raise, never re-raised by later bursts
+  const stored = Object.values(await app.resourceProviders['ais-distress'].methods.listResources());
+  assert.equal(stored.length, 1);
+  assert.ok(stored[0].clearedAt); // clear is never undone
+  plugin.stop();
+});
+
+test('after a restart, an active beacon re-announces via notifier.reannounce', async () => {
+  const app = mockApp();
+  const p1 = start(app);
+  pushPosition(app, EPIRB_CTX, POS);
+  p1.stop();
+  app.deltas.length = 0; // forget the initial alarm
+
+  // Fresh plugin over the same data dir reloads the JSONL store; fire the timer fast.
+  const p2 = makePlugin(app);
+  p2.start({ logbookToken: '', reannounceDelayMs: 0 });
+  await new Promise((r) => setTimeout(r, 10));
+  const raises = alarmsFor(app, 'epirb').filter(
+    (d) => d.delta.updates[0].values[0].value && d.delta.updates[0].values[0].value.state === 'emergency'
+  );
+  assert.equal(raises.length, 1); // re-raised on restart
+  p2.stop();
+});
+
 test('plugin.start degrades gracefully when the position stream is unavailable', () => {
   const app = mockApp();
   delete app.streambundle; // SignalK's plugin-ci harness starts with a minimal app

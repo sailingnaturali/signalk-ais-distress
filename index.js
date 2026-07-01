@@ -142,10 +142,16 @@ module.exports = function makePlugin(app) {
     return { ownPosition: selfPosition(), vesselName: vesselName(event.mmsi) };
   }
 
-  function notify(event) {
-    // Terse on purpose: this string gets spoken. Full detail lives in the
-    // resource store and the logbook entry.
+  // Rebuild the spoken message against the current own-ship position — range
+  // and direction ("N miles <direction>") shift as we move. Terse on purpose:
+  // this string gets spoken; full detail lives in the store and the logbook.
+  function refreshMessage(event) {
     event.message = buildMessage(event, messageContext(event));
+    return event;
+  }
+
+  function notify(event) {
+    refreshMessage(event);
     notifier.raise(event);
   }
 
@@ -305,23 +311,15 @@ module.exports = function makePlugin(app) {
     started = true;
 
     // Survive server restarts mid-incident: re-raise the newest still-fresh
-    // beacon per device type. Delayed so position providers are up and the
-    // spoken message can say "N miles <direction>".
+    // beacon per device type (notifier.reannounce dedupes by notification path,
+    // which is one path per beacon). Delayed so position providers are up and
+    // the refreshed spoken message can say "N miles <direction>".
     reannounceTimer = setTimeout(() => {
       if (!started) return;
-      const now = Date.now();
-      const reannounced = new Set();
-      const events = store.list();
-      for (let i = events.length - 1; i >= 0; i--) {
-        const event = events[i];
-        if (reannounced.has(event.deviceBeacon)) continue;
-        if (event.clearedAt) continue;
-        const at = Date.parse(event.lastReceivedAt || event.receivedAt);
-        if (now - at <= REANNOUNCE_WINDOW_MS) {
-          notify(event);
-          reannounced.add(event.deviceBeacon);
-        }
-      }
+      notifier.reannounce(store.list(), {
+        window: REANNOUNCE_WINDOW_MS,
+        prepare: refreshMessage,
+      });
     }, options.reannounceDelayMs ?? 30000);
   };
 
