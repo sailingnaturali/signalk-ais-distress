@@ -4,6 +4,18 @@ All notable changes to `@sailingnaturali/signalk-ais-distress` are documented he
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1]
+
+### Added
+
+- SignalK plugin-ci workflow (cross-platform validation; +10 on the plugin registry).
+
+### Fixed
+
+- `start()` no longer throws when the position stream is unavailable (e.g. under
+  SignalK's plugin-ci validation harness, or a server without `streambundle`) — it
+  logs a clear error and registers its resources anyway instead of failing to load.
+
 ## [0.1.0]
 
 ### Added
