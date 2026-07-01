@@ -35,9 +35,13 @@ const {
 } = require('@sailingnaturali/signalk-distress-core');
 
 const { buildBeaconEvent } = require('./lib/detect');
+const { normalizePgn129802 } = require('./lib/pgn129802');
+const { classify } = require('./lib/classify');
 
 const DEDUPE_WINDOW_MS = 5 * 60 * 1000;
 const REANNOUNCE_WINDOW_MS = 60 * 60 * 1000;
+const MSG14_PGN = 129802;
+const BROADCAST_STATES = { distress: 'emergency', urgency: 'alarm', safety: 'alert' };
 
 // One red family for every survival beacon — this is always an emergency.
 const BEACON_COLORS = {
@@ -113,6 +117,13 @@ module.exports = function makePlugin(app) {
     pluginId: plugin.id,
     pathFor: (event) => `notifications.ais.distress.${event.deviceBeacon}`,
     stateFor: () => 'emergency',
+  });
+
+  const broadcastNotifier = createNotifier({
+    app,
+    pluginId: plugin.id,
+    pathFor: (event) => `notifications.ais.broadcast.${event.category}`,
+    stateFor: (event) => BROADCAST_STATES[event.category],
   });
 
   function selfPosition() {
@@ -217,6 +228,40 @@ module.exports = function makePlugin(app) {
     if (event) record(event);
   }
 
+  function recordBroadcast(event) {
+    event.receivedAt = event.receivedAt || new Date().toISOString();
+    event.category = classify(event.text);
+    const duplicate = store.findRecent(
+      (e) => e.kind === 'safetyBroadcast' && e.mmsi === event.mmsi && e.text === event.text,
+      Date.parse(event.receivedAt),
+      DEDUPE_WINDOW_MS
+    );
+    if (duplicate) {
+      store.update(duplicate.id, { repeats: (duplicate.repeats || 0) + 1, lastReceivedAt: event.receivedAt });
+      return duplicate;
+    }
+    event.ownShip = captureOwnShip(app, options.snapshotPaths);
+    const stored = store.add(event);
+    if (event.category !== 'routine') {
+      stored.message = buildMessage(stored, messageContext(stored));
+      broadcastNotifier.raise(stored);
+      if (shouldLogbook()) {
+        postLogbook(stored).catch((err) => app.error(`ais-distress logbook write failed: ${err.message}`));
+      }
+    }
+    return stored;
+  }
+
+  function onPgn(pgnData) {
+    if (!started || !pgnData || pgnData.pgn !== MSG14_PGN) return;
+    try {
+      const event = normalizePgn129802(pgnData);
+      if (event) recordBroadcast(event);
+    } catch (err) {
+      app.error(`signalk-ais-distress: PGN 129802 handling failed: ${err.message}`);
+    }
+  }
+
   const buildSets = () =>
     buildMarkerResourceSets(store.list(), {
       now: Date.now(),
@@ -309,6 +354,7 @@ module.exports = function makePlugin(app) {
     }
 
     started = true;
+    app.on('N2KAnalyzerOut', onPgn);
 
     // Survive server restarts mid-incident: re-raise the newest still-fresh
     // beacon per device type (notifier.reannounce dedupes by notification path,
@@ -328,6 +374,7 @@ module.exports = function makePlugin(app) {
     clearTimeout(reannounceTimer);
     if (positionUnsub) positionUnsub();
     positionUnsub = null;
+    app.removeListener('N2KAnalyzerOut', onPgn);
   };
 
   return plugin;
