@@ -279,9 +279,18 @@ module.exports = function makePlugin(app) {
       },
     });
 
-    positionUnsub = app.streambundle
-      .getBus('navigation.position')
-      .onValue(onPositionDelta);
+    // Subscribe to every vessel's position stream. Guard against a minimal app
+    // (e.g. SignalK's plugin-ci validation harness, or a server without the
+    // streambundle) so start() degrades instead of throwing on load.
+    const bus =
+      app.streambundle && typeof app.streambundle.getBus === 'function'
+        ? app.streambundle.getBus('navigation.position')
+        : null;
+    if (bus && typeof bus.onValue === 'function') {
+      positionUnsub = bus.onValue(onPositionDelta);
+    } else {
+      app.error('navigation.position stream unavailable — AIS beacon detection disabled');
+    }
 
     // Let an operator clear an active beacon alarm: a PUT to the notification
     // path drops the live alert and marks the stored beacon(s) so a restart

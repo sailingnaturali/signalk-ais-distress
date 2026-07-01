@@ -95,6 +95,17 @@ test('repeated bursts from the same beacon update, not re-alarm', async () => {
   plugin.stop();
 });
 
+test('plugin.start degrades gracefully when the position stream is unavailable', () => {
+  const app = mockApp();
+  delete app.streambundle; // SignalK's plugin-ci harness starts with a minimal app
+  const errors = [];
+  app.error = (m) => errors.push(m);
+  const plugin = makePlugin(app);
+  assert.doesNotThrow(() => plugin.start({ logbookToken: '', reannounceDelayMs: 1e9 }));
+  assert.ok(errors.some((e) => /position stream|streambundle/i.test(e)), 'should log a clear error');
+  plugin.stop();
+});
+
 test('an ordinary vessel position is ignored', async () => {
   const app = mockApp();
   const plugin = start(app);
