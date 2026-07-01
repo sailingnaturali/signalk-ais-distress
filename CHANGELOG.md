@@ -4,6 +4,18 @@ All notable changes to `@sailingnaturali/signalk-ais-distress` are documented he
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0]
+
+### Added
+
+- Alarm on **AIS Msg 14 coast-station relay text** (NMEA 2000 PGN 129802). The
+  broadcast is classified by its leading procedure word — MAYDAY/MAYDAY RELAY →
+  emergency, PAN PAN → alarm, SÉCURITÉ/SECURITE → alert — and raised under
+  `notifications.ais.broadcast.<category>`, with a forensic log and an optional
+  ship's-log entry. Routine safety broadcasts are logged, never alarmed. Text
+  has no position, so no chart marker. Requires
+  `@sailingnaturali/signalk-distress-core@^0.4.0`.
+
 ## [0.1.2]
 
 ### Fixed
