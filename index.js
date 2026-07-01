@@ -1,0 +1,327 @@
+'use strict';
+
+/*
+ * signalk-ais-distress
+ *
+ * AIS survival-beacon monitoring. SART, MOB, and EPIRB locating devices (MMSI
+ * prefixes 970 / 972 / 974) broadcast their GNSS position over AIS to every
+ * receiver in range. SignalK decodes them into vessel targets, but nothing
+ * flags them — an active survival beacon appears as just another boat.
+ *
+ * This plugin subscribes to the position stream, and for every 97x beacon it
+ * hears:
+ *   - appends it to an on-disk JSONL log (forensics: the full record is kept)
+ *   - serves the beacon history at /signalk/v2/api/resources/ais-distress
+ *   - serves a chart-marker layer at /resources/ais-distress-markers
+ *   - raises notifications.ais.distress.<sart|mob|epirb> under *self* at
+ *     emergency, so the vessel's own alarm chain fires
+ *   - optionally writes a ship's-log entry via signalk-logbook
+ *
+ * A beacon repeats its position several times a minute; repeats inside a
+ * 5-minute window update the stored event instead of re-alarming.
+ */
+
+const path = require('node:path');
+
+const {
+  EventStore,
+  buildMarkerResourceSets,
+  buildMessage,
+  buildLogbookText,
+  captureOwnShip,
+  buildObservations,
+  createNotifier,
+  writeLogbookEntry,
+} = require('@sailingnaturali/signalk-distress-core');
+
+const { buildBeaconEvent } = require('./lib/detect');
+
+const DEDUPE_WINDOW_MS = 5 * 60 * 1000;
+const REANNOUNCE_WINDOW_MS = 60 * 60 * 1000;
+
+// One red family for every survival beacon — this is always an emergency.
+const BEACON_COLORS = {
+  sart: 'rgba(211,47,47,1)',
+  mob: 'rgba(211,47,47,1)',
+  epirb: 'rgba(211,47,47,1)',
+};
+const BEACON_LABEL = { sart: 'AIS SART', mob: 'AIS MOB', epirb: 'AIS EPIRB' };
+
+module.exports = function makePlugin(app) {
+  const plugin = {
+    id: 'signalk-ais-distress',
+    name: 'AIS Distress',
+    description:
+      'Alert on AIS distress beacons (SART / MOB / EPIRB, MMSI 970/972/974): notifications, chart markers, forensic log, and ship\'s-log entries.',
+  };
+
+  plugin.schema = {
+    type: 'object',
+    properties: {
+      maxEvents: {
+        type: 'number',
+        title: 'Beacons to keep',
+        description: 'Oldest beacon events are dropped beyond this count.',
+        default: 1000,
+      },
+      markerWindowHours: {
+        type: 'number',
+        title: 'Chart marker window (hours)',
+        description:
+          'Beacons drop off the ais-distress-markers chart layer after this many hours. Active (un-cleared) beacons always remain.',
+        default: 24,
+      },
+      logbookEnabled: {
+        type: 'boolean',
+        title: 'Write beacons to the ship\'s log (signalk-logbook)',
+        default: true,
+      },
+      logbookUrl: {
+        type: 'string',
+        title: 'Logbook API URL',
+        default: 'http://localhost:3000/plugins/signalk-logbook/logs',
+      },
+      logbookToken: {
+        type: 'string',
+        title: 'SignalK access token for logbook writes',
+        description: 'Plugin routes are auth-gated; without a token the logbook write is skipped.',
+        default: '',
+      },
+      snapshotPaths: {
+        type: 'array',
+        title: 'Extra own-ship paths to snapshot on each beacon',
+        default: [],
+        items: {
+          type: 'object',
+          properties: {
+            field: { type: 'string', title: 'Field name in ownShip' },
+            path: { type: 'string', title: 'SignalK self path' },
+          },
+        },
+      },
+    },
+  };
+
+  let options = {};
+  let store = null;
+  let started = false;
+  let reannounceTimer = null;
+  let positionUnsub = null;
+
+  const notifier = createNotifier({
+    app,
+    pluginId: plugin.id,
+    pathFor: (event) => `notifications.ais.distress.${event.deviceBeacon}`,
+    stateFor: () => 'emergency',
+  });
+
+  function selfPosition() {
+    const p = app.getSelfPath && app.getSelfPath('navigation.position');
+    return p && p.value ? p.value : p;
+  }
+
+  function vesselName(mmsi) {
+    try {
+      const node = app.getPath(`vessels.urn:mrn:imo:mmsi:${mmsi}.name`);
+      return node && typeof node === 'object' ? node.value : node;
+    } catch {
+      return undefined;
+    }
+  }
+
+  function readState(context) {
+    try {
+      const node = app.getPath(`${context}.navigation.state`);
+      return node && typeof node === 'object' ? node.value : node;
+    } catch {
+      return undefined;
+    }
+  }
+
+  function messageContext(event) {
+    return { ownPosition: selfPosition(), vesselName: vesselName(event.mmsi) };
+  }
+
+  function notify(event) {
+    // Terse on purpose: this string gets spoken. Full detail lives in the
+    // resource store and the logbook entry.
+    event.message = buildMessage(event, messageContext(event));
+    notifier.raise(event);
+  }
+
+  /** Clear an active beacon alarm: drop the live notification and stamp the
+   *  stored events so a restart reannounce skips them. */
+  function clearBeacon(beacon) {
+    notifier.clear(`notifications.ais.distress.${beacon}`);
+    store.markCleared((e) => e.deviceBeacon === beacon, new Date().toISOString());
+  }
+
+  function shouldLogbook() {
+    return options.logbookEnabled !== false && Boolean(options.logbookToken);
+  }
+
+  async function postLogbook(event) {
+    await writeLogbookEntry({
+      url: options.logbookUrl,
+      token: options.logbookToken,
+      text: buildLogbookText(event, messageContext(event)),
+      observations: buildObservations(event.ownShip),
+    });
+  }
+
+  /** Store a beacon, alarm on it, and log it. Returns the stored event. */
+  function record(event) {
+    event.receivedAt = event.receivedAt || new Date().toISOString();
+
+    // A beacon repeats its position several times a minute: bump the stored
+    // event, do not re-alarm. Matches on mmsi and ignores clearedAt, so an
+    // operator-cleared beacon that keeps transmitting stays silent.
+    const duplicate = store.findRecent(
+      (e) => e.mmsi === event.mmsi,
+      Date.parse(event.receivedAt),
+      DEDUPE_WINDOW_MS
+    );
+    if (duplicate) {
+      store.update(duplicate.id, {
+        position: event.position || duplicate.position,
+        state: event.state || duplicate.state,
+        repeats: (duplicate.repeats || 0) + 1,
+        lastReceivedAt: event.receivedAt,
+      });
+      return duplicate;
+    }
+
+    event.ownShip = captureOwnShip(app, options.snapshotPaths);
+    const stored = store.add(event);
+    notify(stored);
+    if (shouldLogbook()) {
+      postLogbook(stored).catch((err) => app.error(`ais-distress logbook write failed: ${err.message}`));
+    }
+    return stored;
+  }
+
+  function onPositionDelta(delta) {
+    if (!delta || !delta.value || typeof delta.value.latitude !== 'number') return;
+    const event = buildBeaconEvent({
+      context: delta.context,
+      position: delta.value,
+      state: readState(delta.context),
+      now: Date.now(),
+    });
+    if (event) record(event);
+  }
+
+  const buildSets = () =>
+    buildMarkerResourceSets(store.list(), {
+      now: Date.now(),
+      windowHours: options.markerWindowHours,
+      nameFor: vesselName,
+      bucketOf: (e) => e.deviceBeacon,
+      colors: BEACON_COLORS,
+      label: (b) => BEACON_LABEL[b] || `AIS ${b}`,
+      describe: (b) => `${BEACON_LABEL[b] || b} distress beacons heard on AIS`,
+    });
+
+  plugin.start = function (opts) {
+    options = {
+      maxEvents: 1000,
+      markerWindowHours: 24,
+      logbookEnabled: true,
+      logbookUrl: 'http://localhost:3000/plugins/signalk-logbook/logs',
+      logbookToken: '',
+      ...opts,
+    };
+
+    store = new EventStore({
+      filePath: path.join(app.getDataDirPath(), 'ais-distress.jsonl'),
+      maxEvents: options.maxEvents,
+    });
+
+    app.registerResourceProvider({
+      type: 'ais-distress',
+      methods: {
+        async listResources() {
+          const out = {};
+          for (const event of store.list()) out[event.id] = event;
+          return out;
+        },
+        async getResource(id) {
+          const event = store.get(id);
+          if (!event) throw new Error(`No such AIS distress beacon: ${id}`);
+          return event;
+        },
+        setResource() {
+          throw new Error('ais-distress is read-only');
+        },
+        deleteResource() {
+          throw new Error('ais-distress is read-only');
+        },
+      },
+    });
+
+    app.registerResourceProvider({
+      type: 'ais-distress-markers',
+      methods: {
+        async listResources() {
+          return buildSets();
+        },
+        async getResource(id) {
+          const sets = buildSets();
+          if (!sets[id]) throw new Error(`No AIS distress beacons of type: ${id}`);
+          return sets[id];
+        },
+        setResource() {
+          throw new Error('ais-distress-markers is read-only');
+        },
+        deleteResource() {
+          throw new Error('ais-distress-markers is read-only');
+        },
+      },
+    });
+
+    positionUnsub = app.streambundle
+      .getBus('navigation.position')
+      .onValue(onPositionDelta);
+
+    // Let an operator clear an active beacon alarm: a PUT to the notification
+    // path drops the live alert and marks the stored beacon(s) so a restart
+    // will not re-raise it.
+    for (const beacon of ['sart', 'mob', 'epirb']) {
+      app.registerPutHandler('vessels.self', `notifications.ais.distress.${beacon}`, () => {
+        clearBeacon(beacon);
+        return { state: 'COMPLETED', statusCode: 200 };
+      });
+    }
+
+    started = true;
+
+    // Survive server restarts mid-incident: re-raise the newest still-fresh
+    // beacon per device type. Delayed so position providers are up and the
+    // spoken message can say "N miles <direction>".
+    reannounceTimer = setTimeout(() => {
+      if (!started) return;
+      const now = Date.now();
+      const reannounced = new Set();
+      const events = store.list();
+      for (let i = events.length - 1; i >= 0; i--) {
+        const event = events[i];
+        if (reannounced.has(event.deviceBeacon)) continue;
+        if (event.clearedAt) continue;
+        const at = Date.parse(event.lastReceivedAt || event.receivedAt);
+        if (now - at <= REANNOUNCE_WINDOW_MS) {
+          notify(event);
+          reannounced.add(event.deviceBeacon);
+        }
+      }
+    }, options.reannounceDelayMs ?? 30000);
+  };
+
+  plugin.stop = function () {
+    started = false;
+    clearTimeout(reannounceTimer);
+    if (positionUnsub) positionUnsub();
+    positionUnsub = null;
+  };
+
+  return plugin;
+};
