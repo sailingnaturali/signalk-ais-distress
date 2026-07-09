@@ -4,6 +4,16 @@ All notable changes to `@sailingnaturali/signalk-ais-distress` are documented he
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Test tooling, mirroring `signalk-dsc`: `scripts/send-test-ais.js` builds a
+  real `!AIVDM` type 1 position report from a 970/972/974 MMSI and fires it at
+  the server's NMEA 0183 UDP input (`npm run send-test-ais`), and
+  `scripts/clear-ais-alarm.js` clears active beacon/broadcast alarms
+  (`npm run clear-ais`). README gains a "Trying it without a radio" section.
+
 ## [0.2.2]
 
 ### Fixed

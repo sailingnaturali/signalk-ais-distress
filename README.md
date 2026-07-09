@@ -30,6 +30,64 @@ about *finding* the casualty: a position stream you can home on. They share the
 same 97x identity classes, and both are built on
 [`@sailingnaturali/signalk-distress-core`](https://github.com/sailingnaturali/signalk-distress-core).
 
+## Trying it without a radio
+
+### Quick test script
+
+The repo includes a script that builds a real AIS position report (message
+type 1, `!AIVDM`) from a survival-beacon MMSI and fires it at the server over
+UDP. First add a UDP input in your SignalK pipedProviders (Settings →
+Connections → Add):
+
+```json
+{
+  "id": "ais-test-udp",
+  "pipeElements": [{ "type": "providers/simple",
+    "options": { "type": "NMEA0183", "subOptions": { "type": "udp", "port": "7777" } } }]
+}
+```
+
+Then send a fake beacon:
+
+```bash
+# Default: active SART, MMSI 970123456, near Boundary Pass → naturalaspi.local:7777
+node scripts/send-test-ais.js
+
+# npm alias
+npm run send-test-ais
+
+# Different beacon class (sets the MMSI prefix: 970 sart, 972 mob, 974 epirb)
+node scripts/send-test-ais.js --beacon mob
+node scripts/send-test-ais.js --beacon epirb
+
+# Specific MMSI / position
+node scripts/send-test-ais.js --mmsi 974321098 --lat 48.9 --lon -123.5
+
+# Different host / port
+node scripts/send-test-ais.js --host localhost --port 7777
+```
+
+Verify the beacon was captured:
+
+```
+GET /signalk/v2/api/resources/ais-distress
+```
+
+### Clearing an alarm
+
+A heard beacon raises `notifications.ais.distress.<sart|mob|epirb>` at
+emergency and is re-raised for up to an hour across server restarts. To clear
+an active alarm — dropping the live notification and stopping the restart
+re-raise:
+
+```bash
+SIGNALK_TOKEN=<readwrite-token> npm run clear-ais -- --beacon sart
+```
+
+`--beacon all` (the default) clears all three. A Msg 14 relay alarm clears with
+`--broadcast <distress|urgency|safety|all>` instead. Clearing is a write, so it
+needs a readwrite token. A new incoming beacon still alarms normally.
+
 ## License
 
 MIT

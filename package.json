@@ -4,7 +4,9 @@
   "description": "Alert on AIS distress beacons — SART, MOB, and EPIRB survival devices (MMSI 970/972/974) — with SignalK notifications, chart markers, a forensic log, and a ship's-log entry.",
   "main": "index.js",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "send-test-ais": "node scripts/send-test-ais.js",
+    "clear-ais": "node scripts/clear-ais-alarm.js"
   },
   "keywords": [
     "signalk-node-server-plugin",
