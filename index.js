@@ -173,6 +173,16 @@ module.exports = function makePlugin(app) {
     store.markCleared((e) => e.deviceBeacon === beacon, new Date().toISOString());
   }
 
+  /** Clear an active broadcast (Msg 14 relay) alarm: drop the live notification
+   *  and stamp the stored relay(s) so a restart reannounce skips them. */
+  function clearBroadcast(category) {
+    broadcastNotifier.clear(`notifications.ais.broadcast.${category}`);
+    store.markCleared(
+      (e) => e.kind === 'safetyBroadcast' && e.category === category,
+      new Date().toISOString()
+    );
+  }
+
   function shouldLogbook() {
     return options.logbookEnabled !== false && Boolean(options.logbookToken);
   }
@@ -353,19 +363,36 @@ module.exports = function makePlugin(app) {
       });
     }
 
+    // Same for a broadcast (Msg 14 relay) alarm, one path per severity.
+    for (const category of ['distress', 'urgency', 'safety']) {
+      app.registerPutHandler('vessels.self', `notifications.ais.broadcast.${category}`, () => {
+        clearBroadcast(category);
+        return { state: 'COMPLETED', statusCode: 200 };
+      });
+    }
+
     started = true;
     app.on('N2KAnalyzerOut', onPgn);
 
     // Survive server restarts mid-incident: re-raise the newest still-fresh
-    // beacon per device type (notifier.reannounce dedupes by notification path,
-    // which is one path per beacon). Delayed so position providers are up and
-    // the refreshed spoken message can say "N miles <direction>".
+    // event per notification path. Two families share one store (beacon →
+    // notifications.ais.distress.<beacon>, relay → notifications.ais.broadcast.
+    // <category>), so reannounce each notifier over only its own events — else a
+    // relay leaks onto the beacon path (raised at .undefined @ emergency) or a
+    // beacon onto a broadcast path. Routine relays self-skip: broadcastNotifier's
+    // stateFor is undefined for them and raise() no-ops on a falsy state. Delayed
+    // so position providers are up and the spoken message can say "N miles <dir>".
     reannounceTimer = setTimeout(() => {
       if (!started) return;
-      notifier.reannounce(store.list(), {
-        window: REANNOUNCE_WINDOW_MS,
-        prepare: refreshMessage,
-      });
+      const events = store.list();
+      notifier.reannounce(
+        events.filter((e) => e.kind !== 'safetyBroadcast'),
+        { window: REANNOUNCE_WINDOW_MS, prepare: refreshMessage }
+      );
+      broadcastNotifier.reannounce(
+        events.filter((e) => e.kind === 'safetyBroadcast'),
+        { window: REANNOUNCE_WINDOW_MS, prepare: refreshMessage }
+      );
     }, options.reannounceDelayMs ?? 30000);
   };
 

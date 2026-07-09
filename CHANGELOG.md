@@ -4,6 +4,20 @@ All notable changes to `@sailingnaturali/signalk-ais-distress` are documented he
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2]
+
+### Fixed
+
+- Relay (Msg 14) and beacon alarms share one event store but alarm on different
+  notification paths. The restart reannounce ran the beacon notifier over the
+  whole store, so on restart a stored relay was re-raised at
+  `notifications.ais.distress.undefined` at emergency (routine relays included),
+  while real relay alarms did not survive a restart at all. Reannounce now runs
+  each notifier over only its own events.
+- A relay alarm can now be cleared: a PUT to `notifications.ais.broadcast.<category>`
+  drops the live alert and stamps the stored relay so a restart does not re-raise
+  it (mirrors the beacon clear).
+
 ## [0.2.1]
 
 ### Added
