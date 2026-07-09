@@ -1,6 +1,6 @@
 {
   "name": "@sailingnaturali/signalk-ais-distress",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Alert on AIS distress beacons — SART, MOB, and EPIRB survival devices (MMSI 970/972/974) — with SignalK notifications, chart markers, a forensic log, and a ship's-log entry.",
   "main": "index.js",
   "scripts": {
@@ -30,11 +30,15 @@
     "displayName": "AIS Distress",
     "recommends": [
       "@meri-imperiumi/signalk-logbook"
+    ],
+    "screenshots": [
+      "./docs/screenshots/config.png"
     ]
   },
   "files": [
     "index.js",
-    "lib"
+    "lib",
+    "docs/screenshots/"
   ],
   "publishConfig": {
     "access": "public"
