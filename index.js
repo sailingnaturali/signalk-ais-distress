@@ -12,7 +12,7 @@
  * hears:
  *   - appends it to an on-disk JSONL log (forensics: the full record is kept)
  *   - serves the beacon history at /signalk/v2/api/resources/ais-distress
- *   - serves a chart-marker layer at /resources/ais-distress-markers
+ *   - serves a chart-marker layer at /signalk/v2/api/resources/ais-distress-markers
  *   - raises notifications.ais.distress.<sart|mob|epirb> under *self* at
  *     emergency, so the vessel's own alarm chain fires
  *   - optionally writes a ship's-log entry via signalk-logbook
@@ -290,6 +290,7 @@ module.exports = function makePlugin(app) {
       logbookEnabled: true,
       logbookUrl: 'http://localhost:3000/plugins/signalk-logbook/logs',
       logbookToken: '',
+      snapshotPaths: [],
       ...opts,
     };
 
@@ -393,6 +394,8 @@ module.exports = function makePlugin(app) {
         events.filter((e) => e.kind === 'safetyBroadcast'),
         { window: REANNOUNCE_WINDOW_MS, prepare: refreshMessage }
       );
+      // reannounceDelayMs is an undocumented test seam (schema-hidden): tests set
+      // it to 0 to fire immediately or a huge value to disable the timer.
     }, options.reannounceDelayMs ?? 30000);
   };
 
