@@ -29,7 +29,8 @@
   "signalk": {
     "displayName": "AIS Distress",
     "recommends": [
-      "@meri-imperiumi/signalk-logbook"
+      "@meri-imperiumi/signalk-logbook",
+      "@sailingnaturali/signalk-dsc"
     ],
     "screenshots": [
       "./docs/screenshots/config.png"

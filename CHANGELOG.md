@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   drops the live alert and stamps the stored relay so a restart does not re-raise
   it (mirrors the beacon clear).
 
+### Changed
+
+- Recommend the companion [`signalk-dsc`](https://github.com/sailingnaturali/signalk-dsc)
+  plugin via `signalk.recommends` — AIS finds the casualty, DSC alerts on the VHF
+  Ch 70 call; the two share `signalk-distress-core`.
+
 ## [0.2.1]
 
 ### Added
