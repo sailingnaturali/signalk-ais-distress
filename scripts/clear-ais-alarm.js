@@ -13,7 +13,7 @@
  *   SIGNALK_TOKEN=... npm run clear-ais -- --beacon sart
  *
  * Options:
- *   --host <host>       SignalK HTTP host (default: naturalaspi.local)
+ *   --host <host>       SignalK HTTP host (default: naturalaspi)
  *   --port <port>       SignalK HTTP port (default: 3000)
  *   --beacon <type>     sart | mob | epirb | all (default: all)
  *   --broadcast <cat>   distress | urgency | safety | all — clear a Msg 14
@@ -34,7 +34,7 @@ const BROADCASTS = ['distress', 'urgency', 'safety'];
 
 function parseArgs(argv) {
   const args = {
-    host: 'naturalaspi.local',
+    host: 'naturalaspi',
     port: 3000,
     beacon: null,
     broadcast: null,

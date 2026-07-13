@@ -50,7 +50,7 @@ Connections → Add):
 Then send a fake beacon:
 
 ```bash
-# Default: active SART, MMSI 970123456, near Boundary Pass → naturalaspi.local:7777
+# Default: active SART, MMSI 970123456, near Boundary Pass → naturalaspi:7777
 node scripts/send-test-ais.js
 
 # npm alias

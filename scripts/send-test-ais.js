@@ -13,7 +13,7 @@
  *   node scripts/send-test-ais.js [options]
  *
  * Options:
- *   --host <host>      UDP target host (default: naturalaspi.local)
+ *   --host <host>      UDP target host (default: naturalaspi)
  *   --port <port>      UDP target port (default: 7777)
  *   --beacon <type>    sart | mob | epirb — picks the default MMSI prefix
  *                      (default: sart)
@@ -43,7 +43,7 @@ const BEACON_MMSI = {
 const NAV_STATUS_SART_ACTIVE = 14;
 
 function parseArgs(argv) {
-  const args = { host: 'naturalaspi.local', port: 7777, beacon: 'sart',
+  const args = { host: 'naturalaspi', port: 7777, beacon: 'sart',
                  mmsi: null, lat: 48.75, lon: -123.25 };
   for (let i = 2; i < argv.length; i += 2) {
     const flag = argv[i], val = argv[i + 1];
