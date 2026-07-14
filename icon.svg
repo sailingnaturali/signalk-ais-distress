@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="AIS distress beacon">
+  <defs>
+    <linearGradient id="card" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#184870"/>
+      <stop offset="1" stop-color="#002448"/>
+    </linearGradient>
+    <clipPath id="r"><rect width="128" height="128" rx="22"/></clipPath>
+  </defs>
+  <g clip-path="url(#r)">
+    <rect width="128" height="128" fill="url(#card)"/>
+
+    <!-- distress beacon arcs -->
+    <g fill="none" stroke="#88B868" stroke-linecap="round">
+      <path d="M50 34 a20 20 0 0 1 28 0" stroke-width="4.5"/>
+      <path d="M42 26 a32 32 0 0 1 44 0" stroke-width="4.5" stroke-opacity="0.55"/>
+    </g>
+
+    <!-- antenna -->
+    <line x1="74" y1="54" x2="84" y2="42" stroke="#C0D8E4" stroke-width="4.5" stroke-linecap="round"/>
+
+    <!-- strobe glow + lamp -->
+    <circle cx="64" cy="46" r="11" fill="#88B868" fill-opacity="0.35"/>
+    <circle cx="64" cy="46" r="5.5" fill="#E4F0E4"/>
+
+    <!-- beacon canister -->
+    <rect x="50" y="50" width="28" height="50" rx="13" fill="#C0D8E4"/>
+    <rect x="50" y="70" width="28" height="8" fill="#006030"/>
+
+    <!-- waterline -->
+    <path d="M28 98 q9 -6 18 0 t18 0 t18 0 t18 0" fill="none" stroke="#5888A8" stroke-width="5" stroke-linecap="round"/>
+  </g>
+</svg>
