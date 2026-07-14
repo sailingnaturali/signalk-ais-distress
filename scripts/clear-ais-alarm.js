@@ -92,7 +92,7 @@ function resolveTargets({ beacon, broadcast }) {
       process.exit(1);
     }
     const cats = broadcast === 'all' ? BROADCASTS : [broadcast];
-    return cats.map((c) => `ais/broadcast/${c}`);
+    return cats.map((c) => `received/ais/broadcast/${c}`);
   }
   const b = beacon || 'all';
   if (b !== 'all' && !BEACONS.includes(b)) {
@@ -100,7 +100,7 @@ function resolveTargets({ beacon, broadcast }) {
     process.exit(1);
   }
   const beacons = b === 'all' ? BEACONS : [b];
-  return beacons.map((t) => `ais/distress/${t}`);
+  return beacons.map((t) => `received/ais/distress/${t}`);
 }
 
 async function main() {

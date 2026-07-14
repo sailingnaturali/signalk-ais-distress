@@ -62,12 +62,12 @@ function feedPgn(app, fields) {
   app.n2kHandlers['N2KAnalyzerOut']({ pgn: 129802, fields });
 }
 function broadcastsFor(app, category) {
-  return app.deltas.filter((d) => d.delta.updates[0].values[0].path === `notifications.ais.broadcast.${category}`);
+  return app.deltas.filter((d) => d.delta.updates[0].values[0].path === `notifications.received.ais.broadcast.${category}`);
 }
 
 function alarmsFor(app, beacon) {
   return app.deltas.filter(
-    (d) => d.delta.updates[0].values[0].path === `notifications.ais.distress.${beacon}`
+    (d) => d.delta.updates[0].values[0].path === `notifications.received.ais.distress.${beacon}`
   );
 }
 
@@ -135,7 +135,7 @@ test('an operator clear survives a beacon that keeps transmitting past the windo
     const t0 = Date.parse('2026-06-30T20:00:00.000Z');
     Date.now = () => t0;
     pushPosition(app, EPIRB_CTX, POS);
-    app.putHandlers['vessels.self:notifications.ais.distress.epirb'](); // operator acks
+    app.putHandlers['vessels.self:notifications.received.ais.distress.epirb'](); // operator acks
     for (let m = 2; m <= 20; m += 2) {
       Date.now = () => t0 + m * 60 * 1000;
       pushPosition(app, EPIRB_CTX, POS);
@@ -145,7 +145,7 @@ test('an operator clear survives a beacon that keeps transmitting past the windo
   }
   const raises = app.deltas.filter(
     (d) =>
-      d.delta.updates[0].values[0].path === 'notifications.ais.distress.epirb' &&
+      d.delta.updates[0].values[0].path === 'notifications.received.ais.distress.epirb' &&
       d.delta.updates[0].values[0].value &&
       d.delta.updates[0].values[0].value.state === 'emergency'
   );
@@ -213,11 +213,11 @@ test('a PUT to the notification path clears the alarm and stamps the stored beac
   const plugin = start(app);
   pushPosition(app, EPIRB_CTX, POS);
 
-  const result = app.putHandlers['vessels.self:notifications.ais.distress.epirb']();
+  const result = app.putHandlers['vessels.self:notifications.received.ais.distress.epirb']();
   assert.equal(result.statusCode, 200);
 
   const cleared = app.deltas.filter(
-    (d) => d.delta.updates[0].values[0].path === 'notifications.ais.distress.epirb' &&
+    (d) => d.delta.updates[0].values[0].path === 'notifications.received.ais.distress.epirb' &&
       d.delta.updates[0].values[0].value === null
   );
   assert.equal(cleared.length, 1);
@@ -280,5 +280,48 @@ test('a text-only broadcast never appears on the chart-marker layer', async () =
   feedPgn(app, { sourceId: 3160001, safetyRelatedText: 'MAYDAY RELAY, s/v Blue Heron' });
   const sets = await app.resourceProviders['ais-distress-markers'].methods.listResources();
   assert.equal(Object.keys(sets).length, 0);
+  plugin.stop();
+});
+
+// Target-context emission (SignalK "other alarms" model): a received distress is
+// data about the *source* vessel, so it also surfaces in that vessel's context —
+// the self notifications.received.ais.distress.* alarm stays as the actuation layer.
+const MOB_CTX = 'vessels.urn:mrn:imo:mmsi:972321098';
+
+function targetNotesFor(app, context, leaf) {
+  return app.deltas.filter(
+    (d) => d.delta.context === context &&
+      d.delta.updates[0].values[0].path === `notifications.${leaf}`
+  );
+}
+
+test('a MOB beacon raises notifications.mob in the MOB source-vessel context', () => {
+  const app = mockApp();
+  const plugin = start(app);
+  pushPosition(app, MOB_CTX, POS);
+
+  const notes = targetNotesFor(app, MOB_CTX, 'mob');
+  assert.equal(notes.length, 1, 'one notification under the MOB vessel context');
+  const value = notes[0].delta.updates[0].values[0].value;
+  assert.equal(value.state, 'emergency');
+  assert.deepEqual(value.method, ['visual', 'sound']);
+  assert.ok(value.message, 'carries the spoken message');
+  plugin.stop();
+});
+
+// A beacon isn't necessarily a vessel (a personal EPIRB/SART is a device), and
+// SART/EPIRB carry no nature-of-distress — so a non-MOB beacon surfaces under the
+// maritime-priority leaf notifications.distress, not an invented device-type leaf.
+test('a non-MOB beacon surfaces under notifications.distress in the source-vessel context', () => {
+  const app = mockApp();
+  const plugin = start(app);
+  pushPosition(app, EPIRB_CTX, POS);
+
+  const notes = targetNotesFor(app, EPIRB_CTX, 'distress');
+  assert.equal(notes.length, 1);
+  assert.equal(notes[0].delta.updates[0].values[0].value.state, 'emergency');
+  assert.equal(targetNotesFor(app, EPIRB_CTX, 'epirb').length, 0, 'no device-type leaf');
+  // and the self alarm still fires (actuation layer unchanged)
+  assert.equal(alarmsFor(app, 'epirb').length, 1);
   plugin.stop();
 });

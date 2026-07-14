@@ -13,7 +13,7 @@
  *   - appends it to an on-disk JSONL log (forensics: the full record is kept)
  *   - serves the beacon history at /signalk/v2/api/resources/ais-distress
  *   - serves a chart-marker layer at /signalk/v2/api/resources/ais-distress-markers
- *   - raises notifications.ais.distress.<sart|mob|epirb> under *self* at
+ *   - raises notifications.received.ais.distress.<sart|mob|epirb> under *self* at
  *     emergency, so the vessel's own alarm chain fires
  *   - optionally writes a ship's-log entry via signalk-logbook
  *
@@ -115,14 +115,14 @@ module.exports = function makePlugin(app) {
   const notifier = createNotifier({
     app,
     pluginId: plugin.id,
-    pathFor: (event) => `notifications.ais.distress.${event.deviceBeacon}`,
+    pathFor: (event) => `notifications.received.ais.distress.${event.deviceBeacon}`,
     stateFor: () => 'emergency',
   });
 
   const broadcastNotifier = createNotifier({
     app,
     pluginId: plugin.id,
-    pathFor: (event) => `notifications.ais.broadcast.${event.category}`,
+    pathFor: (event) => `notifications.received.ais.broadcast.${event.category}`,
     stateFor: (event) => BROADCAST_STATES[event.category],
   });
 
@@ -161,22 +161,43 @@ module.exports = function makePlugin(app) {
     return event;
   }
 
+  // Mirror signalk-dsc: besides the self alarm, surface the distress in the
+  // *source vessel's* context, so a consumer reading that AIS target sees its
+  // emergency (SignalK "other alarms" model — as if the vessel raised it). The
+  // self notifications.received.ais.distress.* alarm is the actuation layer our own
+  // annunciator subscribes to; this is the interoperable state record.
+  // Leaf: MOB → notifications.mob (a real spec nature, and what meshtastic keys on
+  // to mint a MOB waypoint). SART/EPIRB carry no nature and a beacon isn't
+  // necessarily a vessel (personal EPIRB/PLB), so they surface under the maritime
+  // priority leaf notifications.distress rather than an invented device-type path.
+  function notifyTarget(event) {
+    if (!event.mmsi) return;
+    const leaf = event.deviceBeacon === 'mob' ? 'mob' : 'distress';
+    const value = { state: 'emergency', method: ['visual', 'sound'], message: event.message };
+    if (event.receivedAt) value.timestamp = event.receivedAt;
+    app.handleMessage(plugin.id, {
+      context: `vessels.urn:mrn:imo:mmsi:${event.mmsi}`,
+      updates: [{ values: [{ path: `notifications.${leaf}`, value }] }],
+    });
+  }
+
   function notify(event) {
     refreshMessage(event);
     notifier.raise(event);
+    notifyTarget(event);
   }
 
   /** Clear an active beacon alarm: drop the live notification and stamp the
    *  stored events so a restart reannounce skips them. */
   function clearBeacon(beacon) {
-    notifier.clear(`notifications.ais.distress.${beacon}`);
+    notifier.clear(`notifications.received.ais.distress.${beacon}`);
     store.markCleared((e) => e.deviceBeacon === beacon, new Date().toISOString());
   }
 
   /** Clear an active broadcast (Msg 14 relay) alarm: drop the live notification
    *  and stamp the stored relay(s) so a restart reannounce skips them. */
   function clearBroadcast(category) {
-    broadcastNotifier.clear(`notifications.ais.broadcast.${category}`);
+    broadcastNotifier.clear(`notifications.received.ais.broadcast.${category}`);
     store.markCleared(
       (e) => e.kind === 'safetyBroadcast' && e.category === category,
       new Date().toISOString()
@@ -358,7 +379,7 @@ module.exports = function makePlugin(app) {
     // path drops the live alert and marks the stored beacon(s) so a restart
     // will not re-raise it.
     for (const beacon of ['sart', 'mob', 'epirb']) {
-      app.registerPutHandler('vessels.self', `notifications.ais.distress.${beacon}`, () => {
+      app.registerPutHandler('vessels.self', `notifications.received.ais.distress.${beacon}`, () => {
         clearBeacon(beacon);
         return { state: 'COMPLETED', statusCode: 200 };
       });
@@ -366,7 +387,7 @@ module.exports = function makePlugin(app) {
 
     // Same for a broadcast (Msg 14 relay) alarm, one path per severity.
     for (const category of ['distress', 'urgency', 'safety']) {
-      app.registerPutHandler('vessels.self', `notifications.ais.broadcast.${category}`, () => {
+      app.registerPutHandler('vessels.self', `notifications.received.ais.broadcast.${category}`, () => {
         clearBroadcast(category);
         return { state: 'COMPLETED', statusCode: 200 };
       });
@@ -377,7 +398,7 @@ module.exports = function makePlugin(app) {
 
     // Survive server restarts mid-incident: re-raise the newest still-fresh
     // event per notification path. Two families share one store (beacon →
-    // notifications.ais.distress.<beacon>, relay → notifications.ais.broadcast.
+    // notifications.received.ais.distress.<beacon>, relay → notifications.received.ais.broadcast.
     // <category>), so reannounce each notifier over only its own events — else a
     // relay leaks onto the beacon path (raised at .undefined @ emergency) or a
     // beacon onto a broadcast path. Routine relays self-skip: broadcastNotifier's

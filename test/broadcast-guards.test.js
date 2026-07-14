@@ -6,10 +6,10 @@
 // (dedupe-past-window) locks in behaviour that already works.
 //
 //   1. beacon-path reannounce must NOT re-raise broadcast events on restart
-//      (today it raises them at notifications.ais.distress.undefined @ emergency,
+//      (today it raises them at notifications.received.ais.distress.undefined @ emergency,
 //      routine ones included) — RED
 //   2. a live relay alarm must survive a restart on its own broadcast path — RED
-//   3. a PUT to notifications.ais.broadcast.<category> must clear the alarm and
+//   3. a PUT to notifications.received.ais.broadcast.<category> must clear the alarm and
 //      not resurrect it on restart — RED (no handler registered today)
 //   4. a relay repeating past the 5-min dedupe window stays one event, alarmed
 //      once (Finding 1's lastReceivedAt slide, for the text-keyed dedupe) — GREEN
@@ -70,7 +70,7 @@ function raisesOn(app, pathStr) {
 test('a stored broadcast is never re-raised on the beacon path after a restart', async () => {
   const app = mockApp();
   const p1 = start(app);
-  feedPgn(app, MAYDAY);   // distress broadcast, alarms on notifications.ais.broadcast.distress
+  feedPgn(app, MAYDAY);   // distress broadcast, alarms on notifications.received.ais.broadcast.distress
   feedPgn(app, ROUTINE);  // routine, stored but never alarmed
   p1.stop();
   app.deltas.length = 0;
@@ -100,7 +100,7 @@ test('an active relay alarm re-announces on its broadcast path after a restart',
   p2.start({ logbookToken: '', reannounceDelayMs: 0 });
   await new Promise((r) => setTimeout(r, 10));
 
-  const raises = raisesOn(app, 'notifications.ais.broadcast.distress')
+  const raises = raisesOn(app, 'notifications.received.ais.broadcast.distress')
     .filter((d) => d.delta.updates[0].values[0].value.state === 'emergency');
   assert.equal(raises.length, 1, 'relay alarm did not survive the restart');
   p2.stop();
@@ -112,13 +112,13 @@ test('a PUT to the broadcast path clears the alarm and it stays cleared across a
   const p1 = start(app);
   feedPgn(app, MAYDAY);
 
-  const handler = app.putHandlers['vessels.self:notifications.ais.broadcast.distress'];
+  const handler = app.putHandlers['vessels.self:notifications.received.ais.broadcast.distress'];
   assert.ok(handler, 'no PUT clear handler registered for the broadcast path');
-  const result = handler('vessels.self', 'notifications.ais.broadcast.distress', null, () => {});
+  const result = handler('vessels.self', 'notifications.received.ais.broadcast.distress', null, () => {});
   assert.equal(result.statusCode, 200);
 
   const nulls = app.deltas.filter(
-    (d) => d.delta.updates[0].values[0].path === 'notifications.ais.broadcast.distress' &&
+    (d) => d.delta.updates[0].values[0].path === 'notifications.received.ais.broadcast.distress' &&
       d.delta.updates[0].values[0].value === null
   );
   assert.equal(nulls.length, 1, 'clear did not emit a null delta');
@@ -131,7 +131,7 @@ test('a PUT to the broadcast path clears the alarm and it stays cleared across a
   const p2 = makePlugin(app);
   p2.start({ logbookToken: '', reannounceDelayMs: 0 });
   await new Promise((r) => setTimeout(r, 10));
-  assert.equal(raisesOn(app, 'notifications.ais.broadcast.distress').length, 0, 'cleared relay re-raised on restart');
+  assert.equal(raisesOn(app, 'notifications.received.ais.broadcast.distress').length, 0, 'cleared relay re-raised on restart');
   p2.stop();
 });
 
@@ -149,7 +149,7 @@ test('a relay repeating past the dedupe window stays one event, alarmed once', a
   } finally {
     Date.now = realNow;
   }
-  assert.equal(raisesOn(app, 'notifications.ais.broadcast.distress').length, 1, 're-alarmed past the window');
+  assert.equal(raisesOn(app, 'notifications.received.ais.broadcast.distress').length, 1, 're-alarmed past the window');
   const stored = Object.values(await app.resourceProviders['ais-distress'].methods.listResources());
   assert.equal(stored.length, 1, 'minted more than one event for one relay');
   plugin.stop();
