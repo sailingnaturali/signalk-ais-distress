@@ -226,13 +226,13 @@ test('a PUT to the notification path clears the alarm and stamps the stored beac
   plugin.stop();
 });
 
-test('an AIS MAYDAY relay (Msg 14) raises an alarm-state broadcast and stores it', async () => {
+test('an AIS MAYDAY relay (Msg 14) raises an emergency broadcast alarm and stores it', async () => {
   const app = mockApp();
   const plugin = start(app);
   feedPgn(app, { sourceId: 3160001, safetyRelatedText: 'MAYDAY RELAY, s/v Blue Heron sinking' });
   const alarms = broadcastsFor(app, 'distress');
   assert.equal(alarms.length, 1);
-  assert.equal(alarms[0].delta.updates[0].values[0].value.state, 'alarm');
+  assert.equal(alarms[0].delta.updates[0].values[0].value.state, 'emergency');
   assert.match(alarms[0].delta.updates[0].values[0].value.message, /^AIS MAYDAY relay: /);
   const stored = Object.values(await app.resourceProviders['ais-distress'].methods.listResources());
   assert.equal(stored.length, 1);
@@ -241,12 +241,12 @@ test('an AIS MAYDAY relay (Msg 14) raises an alarm-state broadcast and stores it
   plugin.stop();
 });
 
-test('PAN PAN → warn, SECURITE → alert', () => {
+test('PAN PAN → alarm, SECURITE → alert', () => {
   const app = mockApp();
   const plugin = start(app);
   feedPgn(app, { sourceId: 3160001, safetyRelatedText: 'PAN PAN, disabled vessel' });
   feedPgn(app, { sourceId: 3160002, safetyRelatedText: 'SECURITE, buoy adrift' });
-  assert.equal(broadcastsFor(app, 'urgency')[0].delta.updates[0].values[0].value.state, 'warn');
+  assert.equal(broadcastsFor(app, 'urgency')[0].delta.updates[0].values[0].value.state, 'alarm');
   assert.equal(broadcastsFor(app, 'safety')[0].delta.updates[0].values[0].value.state, 'alert');
   plugin.stop();
 });

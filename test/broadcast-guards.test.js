@@ -101,7 +101,7 @@ test('an active relay alarm re-announces on its broadcast path after a restart',
   await new Promise((r) => setTimeout(r, 10));
 
   const raises = raisesOn(app, 'notifications.received.ais.broadcast.distress')
-    .filter((d) => d.delta.updates[0].values[0].value.state === 'alarm');
+    .filter((d) => d.delta.updates[0].values[0].value.state === 'emergency');
   assert.equal(raises.length, 1, 'relay alarm did not survive the restart');
   p2.stop();
 });

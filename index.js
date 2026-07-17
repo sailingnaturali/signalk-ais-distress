@@ -41,11 +41,7 @@ const { classify } = require('./lib/classify');
 const DEDUPE_WINDOW_MS = 5 * 60 * 1000;
 const REANNOUNCE_WINDOW_MS = 60 * 60 * 1000;
 const MSG14_PGN = 129802;
-// AIS Msg-14 safety broadcasts carry the three ITU priority categories; they map
-// to spec zones distress → alarm, urgency → warn, safety → alert. (Survival beacons
-// — SART/MOB/EPIRB — are not a voice category and stay emergency; see the beacon
-// notifier below and the source-vessel record in notifyTarget.)
-const BROADCAST_STATES = { distress: 'alarm', urgency: 'warn', safety: 'alert' };
+const BROADCAST_STATES = { distress: 'emergency', urgency: 'alarm', safety: 'alert' };
 
 // One red family for every survival beacon — this is always an emergency.
 const BEACON_COLORS = {
