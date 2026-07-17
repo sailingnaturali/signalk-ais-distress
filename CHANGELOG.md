@@ -4,6 +4,14 @@ All notable changes to `@sailingnaturali/signalk-ais-distress` are documented he
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0]
+
+### Changed
+
+- Securité (Msg-14 safety broadcast) alarms now raise notification state `warn`
+  (was `alert`), aligning with the finalized SignalK spec mapping: distress →
+  `emergency`, urgency → `alarm`, safety → `warn`.
+
 ## [0.4.0]
 
 ### Changed

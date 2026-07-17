@@ -266,13 +266,13 @@ test('an AIS MAYDAY relay (Msg 14) raises an emergency broadcast alarm and store
   plugin.stop();
 });
 
-test('PAN PAN → alarm, SECURITE → alert', () => {
+test('PAN PAN → alarm, SECURITE → warn', () => {
   const app = mockApp();
   const plugin = start(app);
   feedPgn(app, { sourceId: 3160001, safetyRelatedText: 'PAN PAN, disabled vessel' });
   feedPgn(app, { sourceId: 3160002, safetyRelatedText: 'SECURITE, buoy adrift' });
   assert.equal(broadcastsFor(app, 'urgency')[0].delta.updates[0].values[0].value.state, 'alarm');
-  assert.equal(broadcastsFor(app, 'safety')[0].delta.updates[0].values[0].value.state, 'alert');
+  assert.equal(broadcastsFor(app, 'safety')[0].delta.updates[0].values[0].value.state, 'warn');
   plugin.stop();
 });
 
