@@ -61,13 +61,19 @@ function pushPosition(app, context, value) {
 function feedPgn(app, fields) {
   app.n2kHandlers['N2KAnalyzerOut']({ pgn: 129802, fields });
 }
+// Alarms now live at per-call paths notifications.received.<category>.ais-<id>,
+// so match by prefix. The device type (sart/mob/epirb) is no longer in the
+// received actuation path — it lives in the stored event and the per-vessel
+// record — so alarmsFor finds every beacon alarm (all distress-priority).
 function broadcastsFor(app, category) {
-  return app.deltas.filter((d) => d.delta.updates[0].values[0].path === `notifications.received.ais.broadcast.${category}`);
+  return app.deltas.filter((d) =>
+    d.delta.updates[0].values[0].path.startsWith(`notifications.received.${category}.ais-`)
+  );
 }
 
-function alarmsFor(app, beacon) {
-  return app.deltas.filter(
-    (d) => d.delta.updates[0].values[0].path === `notifications.received.ais.distress.${beacon}`
+function alarmsFor(app) {
+  return app.deltas.filter((d) =>
+    d.delta.updates[0].values[0].path.startsWith('notifications.received.distress.ais-')
   );
 }
 
@@ -76,7 +82,7 @@ test('a 974 EPIRB beacon raises an emergency notification and is stored', async 
   const plugin = start(app);
   pushPosition(app, EPIRB_CTX, POS);
 
-  const alarms = alarmsFor(app, 'epirb');
+  const alarms = alarmsFor(app);
   assert.equal(alarms.length, 1);
   const value = alarms[0].delta.updates[0].values[0].value;
   assert.equal(value.state, 'emergency');
@@ -88,6 +94,25 @@ test('a 974 EPIRB beacon raises an emergency notification and is stored', async 
   assert.equal(events[0].mmsi, '974321098');
   assert.equal(events[0].deviceBeacon, 'epirb');
   assert.equal(events[0].state, 'ais-sart');
+  plugin.stop();
+});
+
+test('two concurrent beacons get distinct keys, each acked independently', async () => {
+  const app = mockApp();
+  const CTX2 = 'vessels.urn:mrn:imo:mmsi:974555111';
+  const plugin = start(app);
+  pushPosition(app, EPIRB_CTX, POS);   // mmsi 974321098
+  pushPosition(app, CTX2, POS);        // mmsi 974555111
+
+  const paths = alarmsFor(app).map((d) => d.delta.updates[0].values[0].path);
+  const a = paths.find((p) => p.includes('974321098'));
+  const b = paths.find((p) => p.includes('974555111'));
+  assert.ok(a && b && a !== b, 'each beacon raised at its own per-call path');
+
+  app.putHandlers[`vessels.self:${a}`](); // ack just the first
+  const stored = Object.values(await app.resourceProviders['ais-distress'].methods.listResources());
+  assert.ok(stored.find((e) => e.mmsi === '974321098').clearedAt, 'acked beacon cleared');
+  assert.equal(stored.find((e) => e.mmsi === '974555111').clearedAt, undefined, 'other beacon still active');
   plugin.stop();
 });
 
@@ -145,7 +170,7 @@ test('an operator clear survives a beacon that keeps transmitting past the windo
   }
   const raises = app.deltas.filter(
     (d) =>
-      d.delta.updates[0].values[0].path === 'notifications.received.ais.distress.epirb' &&
+      d.delta.updates[0].values[0].path.startsWith('notifications.received.distress.ais-') &&
       d.delta.updates[0].values[0].value &&
       d.delta.updates[0].values[0].value.state === 'emergency'
   );
@@ -167,7 +192,7 @@ test('after a restart, an active beacon re-announces via notifier.reannounce', a
   const p2 = makePlugin(app);
   p2.start({ logbookToken: '', reannounceDelayMs: 0 });
   await new Promise((r) => setTimeout(r, 10));
-  const raises = alarmsFor(app, 'epirb').filter(
+  const raises = alarmsFor(app).filter(
     (d) => d.delta.updates[0].values[0].value && d.delta.updates[0].values[0].value.state === 'emergency'
   );
   assert.equal(raises.length, 1); // re-raised on restart
@@ -217,7 +242,7 @@ test('a PUT to the notification path clears the alarm and stamps the stored beac
   assert.equal(result.statusCode, 200);
 
   const cleared = app.deltas.filter(
-    (d) => d.delta.updates[0].values[0].path === 'notifications.received.ais.distress.epirb' &&
+    (d) => d.delta.updates[0].values[0].path.startsWith('notifications.received.distress.ais-') &&
       d.delta.updates[0].values[0].value === null
   );
   assert.equal(cleared.length, 1);

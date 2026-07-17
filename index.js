@@ -13,8 +13,9 @@
  *   - appends it to an on-disk JSONL log (forensics: the full record is kept)
  *   - serves the beacon history at /signalk/v2/api/resources/ais-distress
  *   - serves a chart-marker layer at /signalk/v2/api/resources/ais-distress-markers
- *   - raises notifications.received.ais.distress.<sart|mob|epirb> under *self* at
- *     emergency, so the vessel's own alarm chain fires
+ *   - raises a per-call notifications.received.distress.ais-<id> under *self* at
+ *     emergency, so the vessel's own alarm chain fires (bulk clear-by-beacon via
+ *     notifications.received.ais.distress.<sart|mob|epirb>)
  *   - optionally writes a ship's-log entry via signalk-logbook
  *
  * A beacon repeats its position several times a minute; repeats inside a
@@ -31,6 +32,7 @@ const {
   captureOwnShip,
   buildObservations,
   createNotifier,
+  receivedPath,
   writeLogbookEntry,
 } = require('@sailingnaturali/signalk-distress-core');
 
@@ -112,18 +114,25 @@ module.exports = function makePlugin(app) {
   let reannounceTimer = null;
   let positionUnsub = null;
 
+  // A consumer acking one alarm clears just that call: stamp it so the restart
+  // reannounce skips it (bulk clear-by-beacon/category lives in clearBeacon /
+  // clearBroadcast). Survival beacons are all distress-priority.
+  const ackOne = (event) => store.markCleared((e) => e.id === event.id, new Date().toISOString());
+
   const notifier = createNotifier({
     app,
     pluginId: plugin.id,
-    pathFor: (event) => `notifications.received.ais.distress.${event.deviceBeacon}`,
+    pathFor: (event) => receivedPath('distress', 'ais', event.id),
     stateFor: () => 'emergency',
+    onCleared: ackOne,
   });
 
   const broadcastNotifier = createNotifier({
     app,
     pluginId: plugin.id,
-    pathFor: (event) => `notifications.received.ais.broadcast.${event.category}`,
+    pathFor: (event) => receivedPath(event.category, 'ais', event.id),
     stateFor: (event) => BROADCAST_STATES[event.category],
+    onCleared: ackOne,
   });
 
   function selfPosition() {
@@ -193,17 +202,28 @@ module.exports = function makePlugin(app) {
     notifyTarget(event);
   }
 
-  /** Clear an active beacon alarm: drop the live notification and stamp the
-   *  stored events so a restart reannounce skips them. */
+  /** Bulk-clear every active beacon alarm of a type (the CLI / dashboard control
+   *  path `notifications.received.ais.distress.<beacon>`): drop each live per-call
+   *  notification and stamp the stored beacons so a restart reannounce skips them.
+   *  (An individual alarm is acked at its own per-call path — see ackOne.) */
   function clearBeacon(beacon) {
-    notifier.clear(`notifications.received.ais.distress.${beacon}`);
+    for (const e of store.list()) {
+      if (e.deviceBeacon === beacon && !e.clearedAt) {
+        notifier.clear(receivedPath('distress', 'ais', e.id));
+      }
+    }
     store.markCleared((e) => e.deviceBeacon === beacon, new Date().toISOString());
   }
 
-  /** Clear an active broadcast (Msg 14 relay) alarm: drop the live notification
-   *  and stamp the stored relay(s) so a restart reannounce skips them. */
+  /** Bulk-clear every active broadcast (Msg 14 relay) alarm of a category (the
+   *  control path `notifications.received.ais.broadcast.<category>`): drop each
+   *  live per-call notification and stamp the stored relay(s). */
   function clearBroadcast(category) {
-    broadcastNotifier.clear(`notifications.received.ais.broadcast.${category}`);
+    for (const e of store.list()) {
+      if (e.kind === 'safetyBroadcast' && e.category === category && !e.clearedAt) {
+        broadcastNotifier.clear(receivedPath(e.category, 'ais', e.id));
+      }
+    }
     store.markCleared(
       (e) => e.kind === 'safetyBroadcast' && e.category === category,
       new Date().toISOString()

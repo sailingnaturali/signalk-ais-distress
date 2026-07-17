@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Beacon and Msg-14 broadcast alarms now use a per-call key
+  `notifications.received.<category>.ais-<id>` (was one fixed path per beacon
+  type / category), so two concurrent alarms no longer overwrite one key. The
+  device type (sart/mob/epirb) drops from the received key — it lives in the
+  stored event and the per-vessel record. Acknowledge an individual alarm by
+  PUTting its own path; the CLI's `--beacon`/`--broadcast` bulk-clear still
+  clears every active alarm of a type. Requires the `receivedPath` export from
+  `@sailingnaturali/signalk-distress-core`.
+
 ### Added
 
 - An AIS-MOB beacon also raises the flat legacy `notifications.mob` self-key

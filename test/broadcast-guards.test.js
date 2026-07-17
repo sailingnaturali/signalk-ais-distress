@@ -57,12 +57,13 @@ function feedPgn(app, fields) {
   app.n2kHandlers['N2KAnalyzerOut']({ pgn: 129802, fields });
 }
 
-function deltasOnPath(app, re) {
-  return app.deltas.filter((d) => re.test(d.delta.updates[0].values[0].path));
-}
-function raisesOn(app, pathStr) {
+// Alarms live at per-call paths notifications.received.<category>.ais-<id>, so
+// match by prefix. A distress broadcast and a survival beacon now share the
+// received.distress.ais- prefix (both distress-priority); they're told apart by
+// the stored event's `kind`, not the path.
+function raisesOn(app, pathPrefix) {
   return app.deltas.filter(
-    (d) => d.delta.updates[0].values[0].path === pathStr && d.delta.updates[0].values[0].value
+    (d) => d.delta.updates[0].values[0].path.startsWith(pathPrefix) && d.delta.updates[0].values[0].value
   );
 }
 
@@ -79,11 +80,12 @@ test('a stored broadcast is never re-raised on the beacon path after a restart',
   p2.start({ logbookToken: '', reannounceDelayMs: 0 });
   await new Promise((r) => setTimeout(r, 10));
 
-  // The beacon notifier (stateFor: () => 'emergency', pathFor keyed on an
-  // absent deviceBeacon) must not touch broadcast events.
+  // Each notifier reannounces only its own `kind`, so restart re-raises exactly
+  // the MAYDAY (a distress broadcast) — not the routine one, and the beacon
+  // notifier (over zero non-broadcast events) adds nothing.
   assert.equal(
-    deltasOnPath(app, /^notifications\.ais\.distress\./).length, 0,
-    'broadcast events leaked onto the beacon notification path on restart'
+    raisesOn(app, 'notifications.received.distress.ais-').length, 1,
+    'broadcast events leaked onto the beacon notifier, or a routine relay re-raised, on restart'
   );
   p2.stop();
 });
@@ -100,7 +102,7 @@ test('an active relay alarm re-announces on its broadcast path after a restart',
   p2.start({ logbookToken: '', reannounceDelayMs: 0 });
   await new Promise((r) => setTimeout(r, 10));
 
-  const raises = raisesOn(app, 'notifications.received.ais.broadcast.distress')
+  const raises = raisesOn(app, 'notifications.received.distress.ais-')
     .filter((d) => d.delta.updates[0].values[0].value.state === 'emergency');
   assert.equal(raises.length, 1, 'relay alarm did not survive the restart');
   p2.stop();
@@ -118,7 +120,7 @@ test('a PUT to the broadcast path clears the alarm and it stays cleared across a
   assert.equal(result.statusCode, 200);
 
   const nulls = app.deltas.filter(
-    (d) => d.delta.updates[0].values[0].path === 'notifications.received.ais.broadcast.distress' &&
+    (d) => d.delta.updates[0].values[0].path.startsWith('notifications.received.distress.ais-') &&
       d.delta.updates[0].values[0].value === null
   );
   assert.equal(nulls.length, 1, 'clear did not emit a null delta');
@@ -131,7 +133,7 @@ test('a PUT to the broadcast path clears the alarm and it stays cleared across a
   const p2 = makePlugin(app);
   p2.start({ logbookToken: '', reannounceDelayMs: 0 });
   await new Promise((r) => setTimeout(r, 10));
-  assert.equal(raisesOn(app, 'notifications.received.ais.broadcast.distress').length, 0, 'cleared relay re-raised on restart');
+  assert.equal(raisesOn(app, 'notifications.received.distress.ais-').length, 0, 'cleared relay re-raised on restart');
   p2.stop();
 });
 
@@ -149,7 +151,7 @@ test('a relay repeating past the dedupe window stays one event, alarmed once', a
   } finally {
     Date.now = realNow;
   }
-  assert.equal(raisesOn(app, 'notifications.received.ais.broadcast.distress').length, 1, 're-alarmed past the window');
+  assert.equal(raisesOn(app, 'notifications.received.distress.ais-').length, 1, 're-alarmed past the window');
   const stored = Object.values(await app.resourceProviders['ais-distress'].methods.listResources());
   assert.equal(stored.length, 1, 'minted more than one event for one relay');
   plugin.stop();

@@ -11,7 +11,7 @@ the position stream and turns a beacon into a real emergency.
 
 For every 97x beacon heard, it:
 
-- raises `notifications.ais.distress.<sart|mob|epirb>` under *self* at **emergency**, so the vessel's own alarm chain fires;
+- raises a per-call `notifications.received.distress.ais-<id>` under *self* at **emergency**, so the vessel's own alarm chain fires (two concurrent beacons never overwrite one alarm);
 - serves the beacon history at `/signalk/v2/api/resources/ais-distress`;
 - serves a chart-marker layer at `/signalk/v2/api/resources/ais-distress-markers`;
 - keeps an on-disk JSONL forensic log;
@@ -75,10 +75,11 @@ GET /signalk/v2/api/resources/ais-distress
 
 ### Clearing an alarm
 
-A heard beacon raises `notifications.ais.distress.<sart|mob|epirb>` at
-emergency and is re-raised for up to an hour across server restarts. To clear
-an active alarm — dropping the live notification and stopping the restart
-re-raise:
+A heard beacon raises a per-call `notifications.received.distress.ais-<id>` at
+emergency, re-raised for up to an hour across server restarts. Acknowledge one
+alarm by PUTting its own path — what a chartplotter does when you clear the
+alarm it is showing. To bulk-clear every active alarm of a beacon type from the
+CLI — dropping the live notifications and stopping the restart re-raise:
 
 ```bash
 SIGNALK_TOKEN=<readwrite-token> npm run clear-ais -- --beacon sart
