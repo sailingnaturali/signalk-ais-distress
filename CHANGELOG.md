@@ -6,8 +6,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- AIS Msg-14 safety-broadcast severities now follow the SignalK spec thread's ITU
+  priority → notification-zone mapping: **distress → `alarm`** (was `emergency`)
+  and **urgency → `warn`** (was `alarm`); safety stays `alert`. Survival beacons
+  (SART/MOB/EPIRB) and the source-vessel record stay at `emergency`.
+
 ### Added
 
+- An AIS-MOB beacon also raises the flat legacy `notifications.mob` self-key
+  (alongside the per-vessel record) so existing MOB subscribers keep firing until
+  they migrate to the `received.*` scheme.
 - Test tooling, mirroring `signalk-dsc`: `scripts/send-test-ais.js` builds a
   real `!AIVDM` type 1 position report from a 970/972/974 MMSI and fires it at
   the server's NMEA 0183 UDP input (`npm run send-test-ais`), and

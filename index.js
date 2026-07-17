@@ -41,7 +41,11 @@ const { classify } = require('./lib/classify');
 const DEDUPE_WINDOW_MS = 5 * 60 * 1000;
 const REANNOUNCE_WINDOW_MS = 60 * 60 * 1000;
 const MSG14_PGN = 129802;
-const BROADCAST_STATES = { distress: 'emergency', urgency: 'alarm', safety: 'alert' };
+// AIS Msg-14 safety broadcasts carry the three ITU priority categories; they map
+// to spec zones distress → alarm, urgency → warn, safety → alert. (Survival beacons
+// — SART/MOB/EPIRB — are not a voice category and stay emergency; see the beacon
+// notifier below and the source-vessel record in notifyTarget.)
+const BROADCAST_STATES = { distress: 'alarm', urgency: 'warn', safety: 'alert' };
 
 // One red family for every survival beacon — this is always an emergency.
 const BEACON_COLORS = {
@@ -179,6 +183,12 @@ module.exports = function makePlugin(app) {
       context: `vessels.urn:mrn:imo:mmsi:${event.mmsi}`,
       updates: [{ values: [{ path: `notifications.${leaf}`, value }] }],
     });
+    // Also feed the flat legacy self-key so existing MOB subscribers (e.g.
+    // meshtastic waypoint minting) keep firing until they migrate to the
+    // received.* / per-vessel scheme (SK spec thread 2026-07-15).
+    if (leaf === 'mob') {
+      app.handleMessage(plugin.id, { updates: [{ values: [{ path: 'notifications.mob', value }] }] });
+    }
   }
 
   function notify(event) {
