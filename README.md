@@ -22,6 +22,18 @@ window update the stored event instead of re-alarming. Active beacons
 re-announce after a server restart. A PUT to the notification path clears the
 alarm.
 
+> [!WARNING]
+> **Never activate a real SART, AIS-MOB, or EPIRB to test this plugin.**
+> Those are survival devices. Activating one broadcasts a genuine distress
+> position to every receiver in range and, for an EPIRB, to the Cospas-Sarsat
+> satellite system — it launches a search-and-rescue response and a false
+> activation is a reportable event. There is no on-air test mode you should use
+> here.
+>
+> You never have to. See **[Testing it — without transmitting](#testing-it--without-transmitting)**:
+> a script fires a synthetic 97x beacon at your server over UDP, and
+> `npm run clear-ais` tears the alarm back down.
+
 ## Why AIS, not just DSC
 
 DSC distress (VHF Ch 70) is an *alerting* signal — see the companion
@@ -30,7 +42,17 @@ about *finding* the casualty: a position stream you can home on. They share the
 same 97x identity classes, and both are built on
 [`@sailingnaturali/signalk-distress-core`](https://github.com/sailingnaturali/signalk-distress-core).
 
-## Trying it without a radio
+## Testing it — without transmitting
+
+You can verify the whole chain — decode, store, chart marker, alarm, logbook
+entry, and clearing — without a receiver and without activating any beacon.
+
+**Do not activate a real survival device to do it.** A SART, AIS-MOB or EPIRB
+transmits a live distress position the moment it is switched on; an EPIRB also
+reaches Cospas-Sarsat, and a false activation triggers a real SAR response. If
+you need to confirm this plugin consumes your gear correctly, settle it by
+reading the source — beacon classification is in [`lib/`](lib/) — and by
+injecting a synthetic beacon below.
 
 ### Quick test script
 

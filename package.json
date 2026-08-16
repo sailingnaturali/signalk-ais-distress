@@ -1,7 +1,7 @@
 {
   "name": "@sailingnaturali/signalk-ais-distress",
   "version": "0.5.0",
-  "description": "Alert on AIS distress beacons — SART, MOB, and EPIRB survival devices (MMSI 970/972/974) — with SignalK notifications, chart markers, a forensic log, and a ship's-log entry.",
+  "description": "Alert on AIS distress beacons — SART, MOB, and EPIRB survival devices (MMSI 970/972/974) — with SignalK notifications, chart markers, a forensic log, and a ship's-log entry. Test it with a simulated beacon, without transmitting.",
   "main": "index.js",
   "scripts": {
     "test": "node --test",
@@ -17,7 +17,9 @@
     "epirb",
     "mob",
     "distress",
-    "marine"
+    "marine",
+    "simulate",
+    "mayday"
   ],
   "author": "Bryan Clark",
   "license": "MIT",
