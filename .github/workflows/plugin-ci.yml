@@ -7,11 +7,19 @@ name: SignalK Plugin CI
 # Pinned to a signalk-server RELEASE COMMIT, not @master, for supply-chain
 # safety and reproducibility. The signalk-registry skill flags when this pin
 # falls behind the latest signalk-server release.
+# The registry samples a run on `refs/heads/main` (see plugin_ci.workflow_ref in
+# https://signalk.org/signalk-plugin-registry/plugins/<slug>.json), so main is the
+# only branch whose runs feed the score. Running on every branch push as well as
+# every PR ran the whole 9-job matrix TWICE per commit and earned nothing.
 on:
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
-    branches: ['**']
+
+# Never cancel a main run — that is the one the registry reads.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   plugin-ci:
