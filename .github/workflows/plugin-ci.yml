@@ -23,4 +23,4 @@ concurrency:
 
 jobs:
   plugin-ci:
-    uses: SignalK/signalk-server/.github/workflows/plugin-ci.yml@135e68ac9a13b6516b476234707a1513cac2a981 # v2.31.1
+    uses: SignalK/signalk-server/.github/workflows/plugin-ci.yml@7d96d5230d40b8fec9b7fd093d134fb22b39fad7 # v6.6.6
