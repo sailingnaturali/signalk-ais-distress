@@ -357,3 +357,33 @@ test('a non-MOB beacon surfaces under notifications.distress in the source-vesse
   assert.equal(alarmsFor(app, 'epirb').length, 1);
   plugin.stop();
 });
+
+test('a beacon with a logbook token writes to signalk-logbook via v2 Resources API', async () => {
+  const app = mockApp();
+  // Simulate a SignalK app that exposes the v2 Resources API.
+  const calls = [];
+  app.resourcesApi = {
+    setResource: async (resourceType, id, value) => {
+      calls.push({ resourceType, id, value });
+    },
+  };
+  const plugin = start(app, { logbookToken: 'test-token', logbookUrl: undefined });
+  pushPosition(app, EPIRB_CTX, POS);
+
+  // postLogbook is async and called without await inside record(), so let the
+  // microtask queue flush.
+  await new Promise((r) => setTimeout(r, 10));
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].resourceType, 'logentries');
+  assert.equal(typeof calls[0].id, 'string');
+  assert.ok(calls[0].id.length > 0, 'id should be a non-empty uuid');
+  assert.equal(calls[0].value.category, 'radio');
+  assert.equal(calls[0].value.origin, 'auto');
+  assert.ok(calls[0].value.text, 'should carry a logbook text string');
+  // observations may be undefined if the snapshot lacks weather fields
+  if (calls[0].value.observations !== undefined) {
+    assert.ok(calls[0].value.observations, 'should carry own-ship observations if present');
+  }
+  plugin.stop();
+});

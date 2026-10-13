@@ -23,6 +23,7 @@
  */
 
 const path = require('node:path');
+const { randomUUID } = require('node:crypto');
 
 const {
   EventStore,
@@ -33,7 +34,6 @@ const {
   buildObservations,
   createNotifier,
   receivedPath,
-  writeLogbookEntry,
 } = require('@sailingnaturali/signalk-distress-core');
 
 const { buildBeaconEvent } = require('./lib/detect');
@@ -234,13 +234,55 @@ module.exports = function makePlugin(app) {
     return options.logbookEnabled !== false && Boolean(options.logbookToken);
   }
 
+  // Build the payload for a logbook entry — shared by v1 and v2 paths.
+  function logbookPayload(event, messageCtx) {
+    const text = buildLogbookText(event, messageCtx);
+    const observations = buildObservations(event.ownShip);
+    return { text, observations };
+  }
+
   async function postLogbook(event) {
-    await writeLogbookEntry({
-      url: options.logbookUrl,
-      token: options.logbookToken,
-      text: buildLogbookText(event, messageContext(event)),
-      observations: buildObservations(event.ownShip),
-    });
+    if (!shouldLogbook()) return;
+
+    const payload = logbookPayload(event, messageContext(event));
+
+    // Prefer the v2 Resources API (signalk-logbook v2) when the SignalK app
+    // provides app.resourcesApi — no separate URL or cookie dance needed.
+    if (typeof app.resourcesApi?.setResource === 'function') {
+      const uuid = randomUUID();
+      await app.resourcesApi.setResource('logentries', uuid, {
+        ...payload,
+        origin: 'auto',
+        category: 'radio',
+      });
+      return;
+    }
+
+    // Fall back to the v1 plugin REST API when resourcesApi is not available
+    // (e.g. minimal SignalK setup, or explicit opt‑in via logbookUrl).
+    if (options.logbookUrl) {
+      const res = await fetch(options.logbookUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${options.logbookToken}`,
+          Cookie: `JAUTHENTICATION=${options.logbookToken}`,
+        },
+        body: JSON.stringify({
+          ...payload,
+          ago: 0,
+          category: 'radio',
+          origin: 'auto',
+        }),
+      });
+      if (!res.ok) {
+        app.error(`signalk-ais-distress logbook write failed: HTTP ${res.status}`);
+      }
+      return;
+    }
+
+    // No URL configured and no resourcesApi — nothing to do.
+    app.error('signalk-ais-distress: logbook enabled but no writer configured');
   }
 
   /** Store a beacon, alarm on it, and log it. Returns the stored event. */
