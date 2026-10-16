@@ -4,6 +4,24 @@ All notable changes to `@sailingnaturali/signalk-ais-distress` are documented he
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- A SART, MOB or EPIRB beacon heard within `ownMobRangeNm` (default 1 NM, `0`
+  turns it off) of own position also raises our own MOB at
+  `notifications.mob.<mmsi>`, with the beacon's position and
+  `data: { mmsi, beacon }`. It follows the beacon's position, stays until
+  cleared (a PUT to its path, or acking the beacon's received alarm), and is
+  re-raised after a restart.
+
+### Changed
+
+- The flat `notifications.mob` self-key raised for every AIS-MOB beacon is
+  replaced by the per-beacon `notifications.mob.<mmsi>` above. The flat key
+  carried no position, so a chartplotter could not mark it, and consumers such
+  as signalk-meshtastic only act on `notifications.mob.*`.
+
 ## [0.5.0]
 
 ### Changed

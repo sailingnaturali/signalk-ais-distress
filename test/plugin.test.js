@@ -331,13 +331,136 @@ test('a MOB beacon raises notifications.mob in the MOB source-vessel context', (
   assert.equal(value.state, 'emergency');
   assert.deepEqual(value.method, ['visual', 'sound']);
   assert.ok(value.message, 'carries the spoken message');
+  plugin.stop();
+});
 
-  // Flat legacy self-key so existing MOB subscribers keep firing until they migrate.
-  const selfMob = app.deltas.filter(
-    (d) => !d.delta.context && d.delta.updates[0].values[0].path === 'notifications.mob'
+// Own position in mockApp is 48.76, -123.23: POS is about 2 NM away, NEAR about 0.4 NM.
+const NEAR = { latitude: 48.765, longitude: -123.235 };
+
+function ownMobFor(app, mmsi) {
+  return app.deltas.filter(
+    (d) => !d.delta.context && d.delta.updates[0].values[0].path === `notifications.mob.${mmsi}`
   );
-  assert.equal(selfMob.length, 1, 'one legacy self notifications.mob');
-  assert.equal(selfMob[0].delta.updates[0].values[0].value.state, 'emergency');
+}
+
+test('a beacon within range raises our own MOB at the beacon position', () => {
+  for (const [ctx, mmsi, beacon] of [
+    [MOB_CTX, MOB_CTX.split(':').pop(), 'mob'],
+    ['vessels.urn:mrn:imo:mmsi:970111222', '970111222', 'sart'],
+    [EPIRB_CTX, '974321098', 'epirb'],
+  ]) {
+    const app = mockApp();
+    const plugin = start(app);
+    pushPosition(app, ctx, NEAR);
+
+    const own = ownMobFor(app, mmsi);
+    assert.equal(own.length, 1, `own MOB raised for ${beacon}`);
+    const value = own[0].delta.updates[0].values[0].value;
+    assert.equal(value.state, 'emergency');
+    assert.deepEqual(value.method, ['visual', 'sound']);
+    assert.deepEqual(value.position, NEAR);
+    assert.deepEqual(value.data, { mmsi, beacon });
+    assert.equal(alarmsFor(app).length, 1, 'received alarm still raised');
+    plugin.stop();
+  }
+});
+
+test('a beacon beyond range does not raise our own MOB', () => {
+  const app = mockApp();
+  const plugin = start(app);
+  pushPosition(app, MOB_CTX, POS);
+  assert.equal(ownMobFor(app, MOB_CTX.split(':').pop()).length, 0);
+  assert.equal(
+    app.deltas.filter((d) => !d.delta.context && d.delta.updates[0].values[0].path === 'notifications.mob').length,
+    0,
+    'no flat self notifications.mob'
+  );
+  plugin.stop();
+});
+
+test('ownMobRangeNm 0 turns our own MOB off', () => {
+  const app = mockApp();
+  const plugin = start(app, { ownMobRangeNm: 0 });
+  pushPosition(app, MOB_CTX, NEAR);
+  assert.equal(ownMobFor(app, MOB_CTX.split(':').pop()).length, 0);
+  plugin.stop();
+});
+
+test('our own MOB follows the beacon as it drifts, even out of range', () => {
+  const app = mockApp();
+  const mmsi = MOB_CTX.split(':').pop();
+  const plugin = start(app);
+  pushPosition(app, MOB_CTX, NEAR);
+  pushPosition(app, MOB_CTX, POS);
+
+  const own = ownMobFor(app, mmsi);
+  assert.equal(own.length, 2);
+  assert.deepEqual(own[1].delta.updates[0].values[0].value.position, POS);
+  assert.equal(alarmsFor(app).length, 1, 'repeat does not re-raise the received alarm');
+  plugin.stop();
+});
+
+test('clearing our own MOB clears the beacon and keeps it silent', () => {
+  const app = mockApp();
+  const mmsi = MOB_CTX.split(':').pop();
+  const plugin = start(app);
+  pushPosition(app, MOB_CTX, NEAR);
+
+  app.putHandlers[`vessels.self:notifications.mob.${mmsi}`]();
+  const own = ownMobFor(app, mmsi);
+  assert.equal(own.at(-1).delta.updates[0].values[0].value, null, 'own MOB cleared');
+  const received = alarmsFor(app);
+  assert.equal(received.at(-1).delta.updates[0].values[0].value, null, 'received alarm cleared');
+
+  pushPosition(app, MOB_CTX, NEAR);
+  assert.equal(ownMobFor(app, mmsi).length, own.length, 'a cleared beacon stays silent');
+  plugin.stop();
+});
+
+test('acking the received alarm also clears our own MOB', () => {
+  const app = mockApp();
+  const mmsi = MOB_CTX.split(':').pop();
+  const plugin = start(app);
+  pushPosition(app, MOB_CTX, NEAR);
+
+  const receivedPath = alarmsFor(app)[0].delta.updates[0].values[0].path;
+  app.putHandlers[`vessels.self:${receivedPath}`]();
+  assert.equal(ownMobFor(app, mmsi).at(-1).delta.updates[0].values[0].value, null);
+  plugin.stop();
+});
+
+test('our own MOB is re-raised after a restart', async () => {
+  const app = mockApp();
+  const mmsi = MOB_CTX.split(':').pop();
+  const first = start(app);
+  pushPosition(app, MOB_CTX, NEAR);
+  first.stop();
+
+  app.deltas = [];
+  const second = makePlugin(app);
+  second.start({ logbookToken: '', reannounceDelayMs: 0 });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const own = ownMobFor(app, mmsi);
+  assert.equal(own.length, 1);
+  assert.deepEqual(own[0].delta.updates[0].values[0].value.position, NEAR);
+  second.stop();
+});
+
+test('our own MOB can still be cleared after the same instance restarts', async () => {
+  const app = mockApp();
+  const mmsi = MOB_CTX.split(':').pop();
+  const plugin = start(app);
+  pushPosition(app, MOB_CTX, NEAR);
+  plugin.stop();
+
+  // The server unregisters a plugin's PUT handlers when it stops.
+  app.putHandlers = {};
+  plugin.start({ logbookToken: '', reannounceDelayMs: 0 });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  const handler = app.putHandlers[`vessels.self:notifications.mob.${mmsi}`];
+  assert.ok(handler, 'own MOB PUT handler registered again');
+  handler();
+  assert.equal(ownMobFor(app, mmsi).at(-1).delta.updates[0].values[0].value, null);
   plugin.stop();
 });
 

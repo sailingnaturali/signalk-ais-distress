@@ -12,6 +12,7 @@ the position stream and turns a beacon into a real emergency.
 For every 97x beacon heard, it:
 
 - raises a per-call `notifications.received.distress.ais-<id>` under *self* at **emergency**, so the vessel's own alarm chain fires (two concurrent beacons never overwrite one alarm);
+- when the beacon is within **1 nautical mile** of own position (`ownMobRangeNm`, `0` turns it off), also raises our own MOB, `notifications.mob.<mmsi>`, at the beacon's position: a beacon that close is most likely our own crew. It follows the beacon as it drifts, so a chartplotter can mark it and steer to it, and stays until cleared;
 - serves the beacon history at `/signalk/v2/api/resources/ais-distress`;
 - serves a chart-marker layer at `/signalk/v2/api/resources/ais-distress-markers`;
 - keeps an on-disk JSONL forensic log;

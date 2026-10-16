@@ -16,6 +16,8 @@
  *   - raises a per-call notifications.received.distress.ais-<id> under *self* at
  *     emergency, so the vessel's own alarm chain fires (bulk clear-by-beacon via
  *     notifications.received.ais.distress.<sart|mob|epirb>)
+ *   - when the beacon is within ownMobRangeNm of own position, also raises our
+ *     own notifications.mob.<mmsi> at the beacon's position
  *   - optionally writes a ship's-log entry via signalk-logbook
  *
  * A beacon repeats its position several times a minute; repeats inside a
@@ -32,6 +34,7 @@ const {
   captureOwnShip,
   buildObservations,
   createNotifier,
+  distanceNm,
   receivedPath,
   writeLogbookEntry,
 } = require('@sailingnaturali/signalk-distress-core');
@@ -44,6 +47,7 @@ const DEDUPE_WINDOW_MS = 5 * 60 * 1000;
 const REANNOUNCE_WINDOW_MS = 60 * 60 * 1000;
 const MSG14_PGN = 129802;
 const BROADCAST_STATES = { distress: 'emergency', urgency: 'alarm', safety: 'warn' };
+const DEFAULT_OWN_MOB_RANGE_NM = 1;
 
 // One red family for every survival beacon — this is always an emergency.
 const BEACON_COLORS = {
@@ -76,6 +80,14 @@ module.exports = function makePlugin(app) {
         description:
           'Beacons drop off the ais-distress-markers chart layer after this many hours. Active (un-cleared) beacons always remain.',
         default: 24,
+      },
+      ownMobRangeNm: {
+        type: 'number',
+        title: 'Treat a nearby beacon as our own person overboard (nautical miles)',
+        description:
+          'A SART, MOB or EPIRB beacon heard within this range of own position also raises our own MOB alarm (notifications.mob.<mmsi>) at the beacon\'s position, which follows the beacon as it drifts. 0 turns this off.',
+        default: DEFAULT_OWN_MOB_RANGE_NM,
+        minimum: 0,
       },
       logbookEnabled: {
         type: 'boolean',
@@ -117,7 +129,13 @@ module.exports = function makePlugin(app) {
   // A consumer acking one alarm clears just that call: stamp it so the restart
   // reannounce skips it (bulk clear-by-beacon/category lives in clearBeacon /
   // clearBroadcast). Survival beacons are all distress-priority.
-  const ackOne = (event) => store.markCleared((e) => e.id === event.id, new Date().toISOString());
+  const ackOne = (event) => {
+    if (event.ownMob) clearOwnMob(event);
+    store.markCleared(
+      (e) => e.id === event.id || (event.ownMob && e.ownMob && e.mmsi === event.mmsi),
+      new Date().toISOString()
+    );
+  };
 
   const notifier = createNotifier({
     app,
@@ -188,12 +206,70 @@ module.exports = function makePlugin(app) {
       context: `vessels.urn:mrn:imo:mmsi:${event.mmsi}`,
       updates: [{ values: [{ path: `notifications.${leaf}`, value }] }],
     });
-    // Also feed the flat legacy self-key so existing MOB subscribers (e.g.
-    // meshtastic waypoint minting) keep firing until they migrate to the
-    // received.* / per-vessel scheme (SK spec thread 2026-07-15).
-    if (leaf === 'mob') {
-      app.handleMessage(plugin.id, { updates: [{ values: [{ path: 'notifications.mob', value }] }] });
+  }
+
+  // A beacon this close to us is most likely our own crew, so it becomes our
+  // own MOB. It carries the beacon's position, so a plotter can mark it and
+  // steer to it, and it uses one key per beacon under notifications.mob.*, the
+  // shape the server's own MOB and existing MOB consumers (signalk-mob-course,
+  // meshtastic waypoints) already use.
+  const ownMobPath = (event) => `notifications.mob.${event.mmsi}`;
+  const ownMobAcks = new Set();
+
+  function isNearby(position) {
+    const range = options.ownMobRangeNm;
+    const own = selfPosition();
+    return (
+      range > 0 &&
+      Boolean(own) &&
+      typeof own.latitude === 'number' &&
+      Boolean(position) &&
+      distanceNm(own, position) <= range
+    );
+  }
+
+  function raiseOwnMob(event) {
+    const path = ownMobPath(event);
+    const value = {
+      state: 'emergency',
+      method: ['visual', 'sound'],
+      message: event.message,
+      position: event.position,
+      data: { mmsi: event.mmsi, beacon: event.deviceBeacon },
+    };
+    const at = event.lastReceivedAt || event.receivedAt;
+    if (at) value.timestamp = at;
+    app.handleMessage(plugin.id, { updates: [{ values: [{ path, value }] }] });
+    if (!ownMobAcks.has(path)) {
+      ownMobAcks.add(path);
+      app.registerPutHandler('vessels.self', path, () => {
+        const current = activeOwnMobs(event.mmsi);
+        if (current.length) {
+          for (const e of current) notifier.clear(receivedPath('distress', 'ais', e.id));
+          ackOne(current[0]);
+        } else {
+          app.handleMessage(plugin.id, { updates: [{ values: [{ path, value: null }] }] });
+        }
+        return { state: 'COMPLETED', statusCode: 200 };
+      });
     }
+  }
+
+  function clearOwnMob(event) {
+    app.handleMessage(plugin.id, { updates: [{ values: [{ path: ownMobPath(event), value: null }] }] });
+  }
+
+  // Once raised, our own MOB follows the beacon until someone clears it, even
+  // if the beacon drifts out of range.
+  // A beacon unheard for longer than the dedupe window comes back as a new
+  // stored event, so own-MOB state is decided per MMSI, not per event.
+  const activeOwnMobs = (mmsi) => store.list().filter((e) => e.ownMob && !e.clearedAt && e.mmsi === mmsi);
+
+  function updateOwnMob(event) {
+    if (event.clearedAt) return;
+    if (!(event.ownMob || activeOwnMobs(event.mmsi).length || isNearby(event.position))) return;
+    if (!event.ownMob) store.update(event.id, { ownMob: true });
+    raiseOwnMob(refreshMessage(event));
   }
 
   function notify(event) {
@@ -210,6 +286,7 @@ module.exports = function makePlugin(app) {
     for (const e of store.list()) {
       if (e.deviceBeacon === beacon && !e.clearedAt) {
         notifier.clear(receivedPath('distress', 'ais', e.id));
+        if (e.ownMob) clearOwnMob(e);
       }
     }
     store.markCleared((e) => e.deviceBeacon === beacon, new Date().toISOString());
@@ -262,12 +339,14 @@ module.exports = function makePlugin(app) {
         repeats: (duplicate.repeats || 0) + 1,
         lastReceivedAt: event.receivedAt,
       });
+      updateOwnMob(duplicate);
       return duplicate;
     }
 
     event.ownShip = captureOwnShip(app, options.snapshotPaths);
     const stored = store.add(event);
     notify(stored);
+    updateOwnMob(stored);
     if (shouldLogbook()) {
       postLogbook(stored).catch((err) => app.error(`ais-distress logbook write failed: ${err.message}`));
     }
@@ -338,6 +417,7 @@ module.exports = function makePlugin(app) {
       logbookUrl: 'http://localhost:3000/plugins/signalk-logbook/logs',
       logbookToken: '',
       snapshotPaths: [],
+      ownMobRangeNm: DEFAULT_OWN_MOB_RANGE_NM,
       ...opts,
     };
 
@@ -441,6 +521,13 @@ module.exports = function makePlugin(app) {
         events.filter((e) => e.kind === 'safetyBroadcast'),
         { window: REANNOUNCE_WINDOW_MS, prepare: refreshMessage }
       );
+      const now = Date.now();
+      for (const e of events) {
+        const heard = Date.parse(e.lastReceivedAt || e.receivedAt);
+        if (e.ownMob && !e.clearedAt && now - heard <= REANNOUNCE_WINDOW_MS) {
+          raiseOwnMob(refreshMessage(e));
+        }
+      }
       // reannounceDelayMs is an undocumented test seam (schema-hidden): tests set
       // it to 0 to fire immediately or a huge value to disable the timer.
     }, options.reannounceDelayMs ?? 30000);
@@ -448,6 +535,8 @@ module.exports = function makePlugin(app) {
 
   plugin.stop = function () {
     started = false;
+    // The server unregisters a plugin's PUT handlers on stop, so a restart must register them again.
+    ownMobAcks.clear();
     clearTimeout(reannounceTimer);
     if (positionUnsub) positionUnsub();
     positionUnsub = null;
